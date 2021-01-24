@@ -1,12 +1,13 @@
 Summary:	SkypeWeb API Plugin for Pidgin/libpurple/Adium
 Name:		libpurple-protocol-skypeweb
 Version:	1.7
-Release:	2
+Release:	3
 License:	GPL v3
 Group:		Applications/Communications
 Source0:	https://github.com/EionRobb/skype4pidgin/archive/%{version}.tar.gz
 # Source0-md5:	6af9359c55f4644fc8848389df582848
 Patch0:		login.patch
+Patch1:		bitlbee_img_url.patch
 URL:		https://github.com/EionRobb/skype4pidgin/tree/master/skypeweb
 BuildRequires:	cmake >= 2.8
 BuildRequires:	glib2-devel
@@ -23,6 +24,7 @@ and chat with all your Skype buddies from within Pidgin/Adium.
 %prep
 %setup -qn skype4pidgin-%{version}
 %patch0 -p1
+%patch1 -p1
 
 %build
 cd skypeweb
