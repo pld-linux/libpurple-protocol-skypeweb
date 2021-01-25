@@ -1,0 +1,38 @@
+From d0b6b1f1333af9427dd272447e48a0bcd8681619 Mon Sep 17 00:00:00 2001
+From: Jan Palus <jpalus@fastmail.com>
+Date: Mon, 25 Jan 2021 00:26:01 +0100
+Subject: [PATCH] Ensure sent message is in XHTML format
+
+It appears that Skype client is very sensitive to type of message that
+is being sent. Implicit linkifing through `purple_markup_linkify()` for
+some reason adds links with uppercase "<A HREF" which is ignored by
+skype client. While Pidgin itself seems to handle it correctly, it is
+not the case for all libpurple clients ie BitlBee. Follow other
+protocols (ie Jabber) and ensure message is XHTML before sending.
+---
+ skypeweb/skypeweb_messages.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/skypeweb/skypeweb_messages.c b/skypeweb/skypeweb_messages.c
+index ccd8f8d..8e6ba79 100644
+--- a/skypeweb/skypeweb_messages.c
++++ b/skypeweb/skypeweb_messages.c
+@@ -1487,14 +1487,17 @@ skypeweb_send_message(SkypeWebAccount *sa, const gchar *convname, const gchar *m
+ 	gchar *stripped;
+ 	static GRegex *font_strip_regex = NULL;
+ 	gchar *font_stripped;
++	char *xhtml;
+ 	
+ 	url = g_strdup_printf("/v1/users/ME/conversations/%s/messages", purple_url_encode(convname));
+ 	
+ 	clientmessageid = skypeweb_get_js_time();
+ 	clientmessageid_str = g_strdup_printf("%" G_GINT64_FORMAT "", clientmessageid);
+ 	
++	purple_markup_html_to_xhtml(message, &xhtml, NULL);
+ 	// Some clients don't receive messages with <br>'s in them
+-	stripped = purple_strreplace(message, "<br>", "\r\n");
++	stripped = purple_strreplace(xhtml, "<br>", "\r\n");
++	g_free(xhtml);
+ 	
+ 	// Pidgin has a nasty habit of sending <font size="3"> when copy-pasting text
+ 	if (font_strip_regex == NULL) {
