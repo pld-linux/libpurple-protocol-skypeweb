@@ -16,6 +16,7 @@ BuildRequires:	glib2-devel
 BuildRequires:	json-glib-devel
 BuildRequires:	libpurple-devel
 BuildRequires:	pkgconfig
+BuildRequires:	rpmbuild(macros) >= 1.605
 Provides:	libpurple-protocol
 BuildRoot:	%{tmpdir}/%{name}-%{version}-root-%(id -u -n)
 
