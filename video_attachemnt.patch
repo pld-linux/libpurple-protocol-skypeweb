@@ -1,0 +1,176 @@
+From b6766782ec838f3e4b7dc3e3d0181f6c0bdb7d91 Mon Sep 17 00:00:00 2001
+From: Jan Palus <jpalus@fastmail.com>
+Date: Tue, 26 Jan 2021 15:23:08 +0100
+Subject: [PATCH] Preliminary video attachment support
+
+Message looks almost the same as image attachment hence logic is almost
+the same. For now Pidgin displays thumbnail + link to full video while
+Bitlbee shows link.
+---
+ skypeweb/skypeweb_contacts.c | 28 ++++++++++++++++++++++++----
+ skypeweb/skypeweb_contacts.h |  3 ++-
+ skypeweb/skypeweb_messages.c | 33 +++++++++++++++++++++------------
+ skypeweb/skypeweb_messages.h |  7 +++++++
+ 4 files changed, 54 insertions(+), 17 deletions(-)
+
+diff --git a/skypeweb/skypeweb_contacts.c b/skypeweb/skypeweb_contacts.c
+index 35dddc9..aab23e4 100644
+--- a/skypeweb/skypeweb_contacts.c
++++ b/skypeweb/skypeweb_contacts.c
+@@ -180,16 +180,37 @@ skypeweb_got_imagemessage(PurpleHttpConnection *http_conn, PurpleHttpResponse *r
+ 	g_free(ctx_from);
+ }
+ 
++static const char*
++skypeweb_uri_type_name(SkypeWebURIType uri_type) {
++	switch (uri_type) {
++		case SKYPEWEB_URI_TYPE_IMAGE:
++			return "image";
++		case SKYPEWEB_URI_TYPE_VIDEO:
++			return "video";
++		default:
++			return "(unknown)";
++	}
++}
+ void
+-skypeweb_download_uri_to_conv(SkypeWebAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from)
++skypeweb_download_uri_to_conv(SkypeWebAccount *sa, const gchar *uri, SkypeWebURIType uri_type, PurpleConversation *conv, time_t ts, const gchar* from)
+ {
+ 	gchar *url, *text;
+ 	PurpleHttpRequest *request;
+ 	
++	switch (uri_type) {
++		case SKYPEWEB_URI_TYPE_IMAGE:
++			url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
++			break;
++		case SKYPEWEB_URI_TYPE_VIDEO:
++			url = purple_strreplace(uri, "thumbnail", "video");
++			break;
++		default:
++			url = g_strdup(uri);
++			break;
++	}
+ 	if (purple_strequal(purple_core_get_ui(), "BitlBee")) {
+ 		// Bitlbee doesn't support images, so just plop a url to the image instead
+ 		
+-		url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
+ 		if (PURPLE_IS_IM_CONVERSATION(conv)) {
+ 			purple_serv_got_im(sa->pc, from, url, PURPLE_MESSAGE_RECV, ts);
+ 		} else if (PURPLE_IS_CHAT_CONVERSATION(conv)) {
+@@ -212,8 +233,7 @@ skypeweb_download_uri_to_conv(SkypeWebAccount *sa, const gchar *uri, PurpleConve
+ 	purple_http_request(sa->pc, request, skypeweb_got_imagemessage, ctx);
+ 	purple_http_request_unref(request);
+ 
+-	url = purple_strreplace(uri, "imgt1", "imgpsh_fullsize");
+-	text = g_strdup_printf("<a href=\"%s\">Click here to view full version</a>", url);
++	text = g_strdup_printf("<a href=\"%s\">Click here to view full %s</a>", url, skypeweb_uri_type_name(uri_type));
+ 	purple_conversation_write_img_message(conv, from, text, 0, ts);
+ 	
+ 	g_free(url);
+diff --git a/skypeweb/skypeweb_contacts.h b/skypeweb/skypeweb_contacts.h
+index 885f865..8eef9c7 100644
+--- a/skypeweb/skypeweb_contacts.h
++++ b/skypeweb/skypeweb_contacts.h
+@@ -20,9 +20,10 @@
+ #define SKYPEWEB_CONTACTS_H
+ 
+ #include "libskypeweb.h"
++#include "skypeweb_messages.h"
+ 
+ void skypeweb_get_icon(PurpleBuddy *buddy);
+-void skypeweb_download_uri_to_conv(SkypeWebAccount *sa, const gchar *uri, PurpleConversation *conv, time_t ts, const gchar* from);
++void skypeweb_download_uri_to_conv(SkypeWebAccount *sa, const gchar *uri, SkypeWebURIType uri_type, PurpleConversation *conv, time_t ts, const gchar* from);
+ void skypeweb_download_video_message(SkypeWebAccount *sa, const gchar *sid, PurpleConversation *conv);
+ void skypeweb_download_moji_to_conv(SkypeWebAccount *sa, const gchar *text, const gchar *url_thumbnail, PurpleConversation *conv, time_t ts, const gchar* from);
+ void skypeweb_present_uri_as_filetransfer(SkypeWebAccount *sa, const gchar *uri, const gchar *from);
+diff --git a/skypeweb/skypeweb_messages.c b/skypeweb/skypeweb_messages.c
+index 8e6ba79..bf9f472 100644
+--- a/skypeweb/skypeweb_messages.c
++++ b/skypeweb/skypeweb_messages.c
+@@ -116,6 +116,22 @@ process_userpresence_resource(SkypeWebAccount *sa, JsonObject *resource)
+ 	// return FALSE;
+ // }
+ 
++static void
++skypeweb_process_uri_message(const gchar* messagetype, SkypeWebAccount *sa, PurpleConversation* conv, const gchar* uri_content, time_t composetimestamp, const gchar* from) {
++	PurpleXmlNode *blob = purple_xmlnode_from_str(uri_content, -1);
++	const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
++	SkypeWebURIType uri_type;
++	
++	if (g_str_has_suffix(messagetype, "Media_Video")) {
++		uri_type = SKYPEWEB_URI_TYPE_VIDEO;
++	} else {
++		uri_type = SKYPEWEB_URI_TYPE_IMAGE;
++	}
++	
++	skypeweb_download_uri_to_conv(sa, uri, uri_type, conv, composetimestamp, from);
++	purple_xmlnode_free(blob);
++}
++
+ static void
+ process_message_resource(SkypeWebAccount *sa, JsonObject *resource)
+ {
+@@ -337,15 +353,11 @@ process_message_resource(SkypeWebAccount *sa, JsonObject *resource)
+ 			} 
+ 			
+ 			purple_xmlnode_free(blob);
+-		} else if (g_str_equal(messagetype, "RichText/UriObject")) {
+-			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+-			const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
+-			
++		} else if (g_str_equal(messagetype, "RichText/UriObject") || g_str_equal(messagetype, "RichText/Media_Video")) {
+ 			from = skypeweb_contact_url_to_name(from);
+ 			g_return_if_fail(from);
+ 			
+-			skypeweb_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
+-			purple_xmlnode_free(blob);
++			skypeweb_process_uri_message(messagetype, sa, conv, content, composetimestamp, from);
+ 		} else {
+ 			purple_debug_warning("skypeweb", "Unhandled thread message resource messagetype '%s'\n", messagetype);
+ 		}
+@@ -420,11 +432,9 @@ process_message_resource(SkypeWebAccount *sa, JsonObject *resource)
+ 				conv = PURPLE_CONVERSATION(imconv);
+ 			}
+ 			g_free(html);
+-		} else if (g_str_equal(messagetype, "RichText/UriObject")) {
+-			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+-			const gchar *uri = purple_xmlnode_get_attrib(blob, "url_thumbnail");
++		} else if (g_str_equal(messagetype, "RichText/UriObject") || g_str_equal(messagetype, "RichText/Media_Video")) {
+ 			PurpleIMConversation *imconv;
+-			
++
+ 			if (skypeweb_is_user_self(sa, from)) {
+ 				from = convbuddyname;
+ 			}
+@@ -436,9 +446,8 @@ process_message_resource(SkypeWebAccount *sa, JsonObject *resource)
+ 				}
+ 				
+ 				conv = PURPLE_CONVERSATION(imconv);
+-				skypeweb_download_uri_to_conv(sa, uri, conv, composetimestamp, from);
++				skypeweb_process_uri_message(messagetype, sa, conv, content, composetimestamp, from);
+ 			}
+-			purple_xmlnode_free(blob);
+ 		} else if (g_str_equal(messagetype, "RichText/Media_GenericFile")) {
+ 			PurpleXmlNode *blob = purple_xmlnode_from_str(content, -1);
+ 			const gchar *uri = purple_xmlnode_get_attrib(blob, "uri");
+diff --git a/skypeweb/skypeweb_messages.h b/skypeweb/skypeweb_messages.h
+index 5c03fa9..98fcb60 100644
+--- a/skypeweb/skypeweb_messages.h
++++ b/skypeweb/skypeweb_messages.h
+@@ -21,6 +21,13 @@
+ 
+ #include "libskypeweb.h"
+ 
++typedef enum
++{
++	SKYPEWEB_URI_TYPE_IMAGE,
++	SKYPEWEB_URI_TYPE_VIDEO,
++	SKYPEWEB_URI_TYPE_UNKNOWN
++} SkypeWebURIType;
++
+ gint skypeweb_send_im(PurpleConnection *pc, 
+ #if PURPLE_VERSION_CHECK(3, 0, 0)
+ 	PurpleMessage *msg
+-- 
+2.30.1
+
